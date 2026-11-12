@@ -171,7 +171,7 @@ std::vector<const char*> GetInstanceExtensions(Frontend::WindowSystemType window
 
     // Add the windowing system specific extension
     std::vector<const char*> extensions;
-    extensions.reserve(7);
+    extensions.reserve(8);
 
     switch (window_type) {
     case Frontend::WindowSystemType::Headless:
@@ -208,6 +208,12 @@ std::vector<const char*> GetInstanceExtensions(Frontend::WindowSystemType window
     if (enable_debug_utils) {
         extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
     }
+
+#if defined(__APPLE__)
+    // MoltenVK is exposed as a Vulkan portability driver and is omitted from physical-device
+    // enumeration unless portability enumeration is explicitly enabled.
+    extensions.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+#endif
 
     // Sanitize extension list
     std::erase_if(extensions, [&](const char* extension) -> bool {
@@ -303,6 +309,14 @@ vk::UniqueInstance CreateInstance(Frontend::WindowSystemType window_type, bool e
     // bbport: Intel XeSS (optional libxess.dll) likewise.
     if (Xess* xess = Xess::Get()) {
         xess->AppendInstanceExtensions(extensions);
+    }
+    const auto portability_extension = std::find_if(
+        extensions.begin(), extensions.end(), [](const char* extension) {
+            return std::strcmp(extension, VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME) == 0;
+        });
+    vk::InstanceCreateFlags instance_flags{};
+    if (portability_extension != extensions.end()) {
+        instance_flags = vk::InstanceCreateFlagBits::eEnumeratePortabilityKHR;
     }
 
     const vk::ApplicationInfo application_info = {
@@ -418,6 +432,7 @@ vk::UniqueInstance CreateInstance(Frontend::WindowSystemType window_type, bool e
 
     vk::StructureChain<vk::InstanceCreateInfo, vk::LayerSettingsCreateInfoEXT> instance_ci_chain = {
         vk::InstanceCreateInfo{
+            .flags = instance_flags,
             .pApplicationInfo = &application_info,
             .enabledLayerCount = static_cast<u32>(layers.size()),
             .ppEnabledLayerNames = layers.data(),

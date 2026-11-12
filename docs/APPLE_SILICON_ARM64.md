@@ -31,6 +31,8 @@ dump completed, then Vulkan compute-pipeline creation returned ErrorUnknown. One
 logged the GPU assertion and process exit code 23. The failing compute pipeline's shader hash was
 not captured, so the timing suggests a relationship to shader 0x43b8ee5e but does not prove it.
 The DDA fallback is not a launch fix yet.
+A later retry also exited with code 23, but its captured output ended after shader translation
+without the assertion or a guest-quit trace, so that retry does not identify its exit cause.
 
 Other observations:
 
@@ -65,8 +67,8 @@ object files, pipeline caches and the executable out of Git. It calls the local 
 copies the GoW3 runtime into the ignored build directory, patches the generated entry point to
 start the Vulkan adapter, then builds the ARM64 executable and adapter.
 
-run.sh currently defaults GOW3_DIRECT_MEMORY_ACCESS=1 for the SRT experiment. Set it to 0 to
-reproduce the explicit unsupported-SRT rejection. Set UNCHARTED_TRACE_SRT=1 to emit targeted
+run.sh leaves GOW3_DIRECT_MEMORY_ACCESS=0 by default. Set it to 1 to try the experimental SRT
+fallback; that path has not reached a title screen. Set UNCHARTED_TRACE_SRT=1 to emit targeted
 shader and compute-pipeline checkpoints while investigating the failure.
 
 ## Next engineering work

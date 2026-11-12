@@ -22,7 +22,7 @@ export PS4_LANG="${PS4_LANG:-English}"
 export PS4_PRO="${PS4_PRO:-0}"
 # The ARM64 build applies a local guard change so unresolved SRT reads may use
 # the renderer's existing BDA guest-memory path for this experimental target.
-export GOW3_DIRECT_MEMORY_ACCESS="${GOW3_DIRECT_MEMORY_ACCESS:-1}"
+export GOW3_DIRECT_MEMORY_ACCESS="${GOW3_DIRECT_MEMORY_ACCESS:-0}"
 
 # The Vulkan bridge used for this first ARM64 launch is installed by the GoW3 lab setup.
 if [[ -z "${VK_DRIVER_FILES:-}" ]]; then

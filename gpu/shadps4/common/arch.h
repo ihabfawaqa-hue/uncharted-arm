@@ -4,6 +4,9 @@
 #pragma once
 
 #include <thread>
+#if defined(_MSC_VER)
+#include <intrin.h>
+#endif
 
 #if defined(__x86_64__) || defined(_M_X64)
 #define ARCH_X86_64 1
