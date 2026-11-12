@@ -4,6 +4,9 @@
 #include <atomic>
 #include <mutex>
 #include <string>
+#if defined(__APPLE__)
+#include <SDL3/SDL_metal.h>
+#endif
 #include "common/types.h"
 
 struct SDL_Window;
@@ -44,6 +47,9 @@ private:
     std::string text, text_prompt, base_title;
     void UpdateTextTitle();
     SDL_Window* window{};
+#if defined(__APPLE__)
+    SDL_MetalView metal_view{};
+#endif
     WindowSystemInfo window_info{};
 };
 

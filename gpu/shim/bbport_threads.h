@@ -6,10 +6,14 @@
 #pragma once
 
 #include <algorithm>
+#include <cstdint>
 #include <thread>
 #ifdef _WIN32
 #include <bit>
 #include <windows.h>
+#elif defined(__APPLE__)
+#include <pthread.h>
+#include <pthread/qos.h>
 #else
 #include <sched.h>
 #include <sys/resource.h>
@@ -17,6 +21,18 @@
 #endif
 
 namespace BbThreads {
+inline std::uint64_t ThreadId() {
+#ifdef _WIN32
+    return GetCurrentThreadId();
+#elif defined(__APPLE__)
+    std::uint64_t id = 0;
+    pthread_threadid_np(nullptr, &id);
+    return id;
+#else
+    return static_cast<std::uint64_t>(gettid());
+#endif
+}
+
 /// Set on the helper threads (draw preparation, preload): they are not the GPU thread.
 inline thread_local bool background_thread = false;
 inline bool IsBackground() {
@@ -58,6 +74,29 @@ struct ScopedNormalPriority {
         SetThreadPriority(GetCurrentThread(), previous);
     }
 };
+#elif defined(__APPLE__)
+
+/// Apple exposes processor count but not Linux affinity masks.
+inline unsigned Available() {
+    return std::max(1u, std::thread::hardware_concurrency());
+}
+
+inline void MakeBackground() {
+    background_thread = true;
+    pthread_set_qos_class_self_np(QOS_CLASS_BACKGROUND, 0);
+}
+
+inline void MakeBelowNormal() {
+    background_thread = true;
+    pthread_set_qos_class_self_np(QOS_CLASS_UTILITY, 0);
+}
+
+struct ScopedNormalPriority {
+    // macOS does not provide a reliable previous-QoS query for restoring this thread.
+    ScopedNormalPriority() {}
+    ~ScopedNormalPriority() {}
+};
+
 #else
 
 /// Hardware threads available to the process.

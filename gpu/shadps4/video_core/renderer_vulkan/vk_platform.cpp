@@ -264,15 +264,19 @@ vk::UniqueInstance CreateInstance(Frontend::WindowSystemType window_type, bool e
     LOG_INFO(Render_Vulkan, "Creating vulkan instance");
 
 #if defined(__APPLE__)
-    // Initialize the environment with the path to the included ICD, so that the loader will
-    // find it.
-    static const auto icd_path = [] {
+    // The Vulkan loader finds installed ICD manifests itself. Only point it at a
+    // bundled MoltenVK manifest when one is actually next to the executable; setting
+    // VK_DRIVER_FILES to the executable directory hides system-installed drivers.
+    if (!std::getenv("VK_DRIVER_FILES")) {
         char path[PATH_MAX];
         u32 length = PATH_MAX;
-        _NSGetExecutablePath(path, &length);
-        return std::filesystem::path(path).parent_path();
-    }();
-    setenv("VK_DRIVER_FILES", icd_path.c_str(), true);
+        if (_NSGetExecutablePath(path, &length) == 0) {
+            const auto manifest = std::filesystem::path(path).parent_path() / "MoltenVK_icd.json";
+            if (std::filesystem::exists(manifest)) {
+                setenv("VK_DRIVER_FILES", manifest.c_str(), 0);
+            }
+        }
+    }
 #endif
 
     static vk::detail::DynamicLoader dl;

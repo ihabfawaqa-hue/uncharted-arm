@@ -6,6 +6,10 @@ Same idea as my [Bloodborne port](https://github.com/Supermedo/bloodborne_pc): t
 code runs directly on your PC and the graphics are translated to Vulkan. Unpack the zip, start
 `Uncharted.exe`, pick your game folder, choose a game and press **PLAY**.
 
+> This fork also carries an **experimental Apple Silicon ARM64 workstream**. It uses the GoW3
+> ARM64 ahead-of-time runtime to translate the PS4 CPU code; it is not yet a playable macOS port.
+> See [the ARM64 status and build notes](docs/APPLE_SILICON_ARM64.md) for the exact launch result.
+
 **[Download the latest version](https://github.com/Supermedo/uncharted_pc/releases/latest)** · **[Join the Discord](https://discord.gg/s3RgH6cRfJ)**
 
 > **No game files are included.** You need your own decrypted dump of the collection

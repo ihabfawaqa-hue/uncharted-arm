@@ -59,6 +59,9 @@ namespace Libraries::AvPlayer { void RegisterLib(Core::Loader::SymbolsResolver* 
 namespace Libraries::Videodec2 { void RegisterLib(Core::Loader::SymbolsResolver* sym); }
 namespace Libraries::VideoOut { void RegisterLib(Core::Loader::SymbolsResolver* sym); }
 namespace Libraries::Kernel { void RegisterEventQueue(Core::Loader::SymbolsResolver* sym); }
+#if defined(BB_ENABLE_NETWORK)
+extern "C" void bbnet_register(void); // bbnet/bbnet_glue.cpp: optional network and PSN services
+#endif
 
 namespace {
 struct Symbol {
@@ -281,14 +284,15 @@ extern "C" int bbgpu_init(const BbGpuConfig* config) {
 }
 
 namespace Libraries::Kernel { void StartKernelService(); }
-extern "C" void bbnet_register(void); // bbnet/bbnet_glue.cpp: network and PSN (co-op)
 extern "C" void bbgpu_register_kernel(void) {
     Libraries::Kernel::StartKernelService();
     Core::Loader::SymbolsResolver resolver;
     Libraries::Kernel::RegisterEventQueue(&resolver);
     Libraries::AvPlayer::RegisterLib(&resolver);
     Libraries::Videodec2::RegisterLib(&resolver);
+#if defined(BB_ENABLE_NETWORK)
     bbnet_register();
+#endif
 }
 
 extern "C" uintptr_t bbgpu_resolve(const char* scoped_nid) {

@@ -99,7 +99,12 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}
     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, width_);
     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, height_);
     SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_RESIZABLE_BOOLEAN, true);
+#if defined(__APPLE__)
+    // The renderer creates a Vulkan surface from the CAMetalLayer itself.
+    SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_METAL_BOOLEAN, true);
+#else
     SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_VULKAN_BOOLEAN, true);
+#endif
     const char* fullscreen = std::getenv("BB_FULLSCREEN");
     SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_FULLSCREEN_BOOLEAN, fullscreen && fullscreen[0] == '1');
     base_title = title;
@@ -114,6 +119,15 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}
     if (driver && !std::strcmp(driver, "windows")) {
         window_info.type = WindowSystemType::Windows;
         window_info.render_surface = SDL_GetPointerProperty(wp, SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
+    } else
+#endif
+#if defined(__APPLE__)
+    if (driver && !std::strcmp(driver, "cocoa")) {
+        window_info.type = WindowSystemType::Metal;
+        metal_view = SDL_Metal_CreateView(window);
+        ASSERT_MSG(metal_view, "Failed to create a Metal view: {}", SDL_GetError());
+        window_info.render_surface = SDL_Metal_GetLayer(metal_view);
+        ASSERT_MSG(window_info.render_surface, "SDL returned a null CAMetalLayer");
     } else
 #endif
     if (driver && !std::strcmp(driver, "x11")) {
@@ -135,6 +149,9 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}
 }
 
 WindowSDL::~WindowSDL() {
+#if defined(__APPLE__)
+    if (metal_view) SDL_Metal_DestroyView(metal_view);
+#endif
     SDL_DestroyWindow(window);
 }
 

@@ -25,6 +25,12 @@ add_compile_options(-fno-omit-frame-pointer)
 option(BB_LTO "Link-time optimization of bbgpu" ON)
 set(BB_PGO "off" CACHE STRING "Profile-guided optimization: off, generate, use")
 set(BB_PGO_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../pgo" CACHE PATH "Profile directory")
+if (APPLE)
+    set(BB_NETWORK_DEFAULT OFF)
+else()
+    set(BB_NETWORK_DEFAULT ON)
+endif()
+option(BB_ENABLE_NETWORK "Build the optional PSN/community network services" ${BB_NETWORK_DEFAULT})
 if (BB_LTO)
     include(CheckIPOSupported)
     check_ipo_supported(RESULT bb_ipo_ok OUTPUT bb_ipo_error)
@@ -90,7 +96,9 @@ find_package(tsl-robin-map REQUIRED)
 find_package(VulkanMemoryAllocator CONFIG QUIET)
 if (NOT VulkanMemoryAllocator_FOUND)
     # MSYS2 ships the header (include/vma/vk_mem_alloc.h) without a CMake package.
-    find_path(VMA_INCLUDE_DIR vk_mem_alloc.h PATH_SUFFIXES vma REQUIRED)
+    find_path(VMA_INCLUDE_DIR vk_mem_alloc.h
+        HINTS ${CMAKE_CURRENT_SOURCE_DIR}/third_party/vma
+        PATH_SUFFIXES vma REQUIRED)
     add_library(VulkanMemoryAllocator INTERFACE)
     add_library(GPUOpen::VulkanMemoryAllocator ALIAS VulkanMemoryAllocator)
     target_include_directories(VulkanMemoryAllocator INTERFACE ${VMA_INCLUDE_DIR})
@@ -98,7 +106,7 @@ endif()
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(XXHASH REQUIRED IMPORTED_TARGET libxxhash)
 pkg_check_modules(SDL3 REQUIRED IMPORTED_TARGET sdl3)
-if (NOT WIN32)
+if (NOT WIN32 AND NOT APPLE)
     pkg_check_modules(X11 REQUIRED IMPORTED_TARGET x11)
 endif()
 find_package(miniz QUIET)
@@ -193,58 +201,61 @@ add_library(bbgpu ${BBGPU_KIND} ${VIDEO_CORE} ${RECOMPILER} ${COMMON} ${SHIM_SOU
     shadps4/core/libraries/videodec/video_utils.cpp
     shadps4/core/libraries/videodec/videodec2.cpp shadps4/core/libraries/videodec/videodec2_impl.cpp)
 add_dependencies(bbgpu host_shaders)
-# bbport co-op: PS4 network and PSN libraries with the shadNet client, from shadp2p
-# (github.com/Wozzardman/shadp2p, GPL-2.0), for private Bloodborne co-op servers.
-find_package(Protobuf CONFIG QUIET)
-if (NOT Protobuf_FOUND)
-    # distributions with protobuf 3.x (Debian) ship no CMake package.
-    find_package(Protobuf REQUIRED)
+if (BB_ENABLE_NETWORK)
+    # Optional PSN/community network services and the shadNet client.
+    find_package(Protobuf CONFIG QUIET)
+    if (NOT Protobuf_FOUND)
+        find_package(Protobuf REQUIRED)
+    endif()
+    set(SHADNET_PROTO_OUT "${CMAKE_CURRENT_BINARY_DIR}/shadnet_proto_gen")
+    file(MAKE_DIRECTORY "${SHADNET_PROTO_OUT}")
+    add_custom_command(
+        OUTPUT "${SHADNET_PROTO_OUT}/shadnet.pb.cc" "${SHADNET_PROTO_OUT}/shadnet.pb.h"
+        COMMAND protobuf::protoc "--proto_path=${CMAKE_CURRENT_SOURCE_DIR}/shadps4/shadnet"
+                "--cpp_out=${SHADNET_PROTO_OUT}" "${CMAKE_CURRENT_SOURCE_DIR}/shadps4/shadnet/shadnet.proto"
+        DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shadps4/shadnet/shadnet.proto")
+    file(GLOB_RECURSE BBNET_SOURCES CONFIGURE_DEPENDS shadps4/core/libraries/network/*.cpp
+        shadps4/core/libraries/np/*.cpp shadps4/shadnet/*.cpp)
+    list(FILTER BBNET_SOURCES EXCLUDE REGEX
+        "np_trophy|trophy_ui|np_sns_facebook_dialog|np_profile_dialog/|np_commerce/")
+    find_package(nlohmann_json CONFIG REQUIRED)
+    add_library(bbnet STATIC ${BBNET_SOURCES} "${SHADNET_PROTO_OUT}/shadnet.pb.cc" bbnet/bbnet_glue.cpp)
+    target_include_directories(bbnet PRIVATE shim shadps4 shadps4/shadnet "${SHADNET_PROTO_OUT}"
+        third_party/imgui third_party/httplib)
+    target_link_libraries(bbnet PRIVATE nlohmann_json::nlohmann_json)
+    find_package(OpenSSL REQUIRED)
+    find_package(ZLIB REQUIRED)
+    target_compile_definitions(bbnet PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT CPPHTTPLIB_ZLIB_SUPPORT)
+    target_link_libraries(bbnet PRIVATE OpenSSL::SSL OpenSSL::Crypto ZLIB::ZLIB)
+    if (WIN32)
+        target_sources(bbnet PRIVATE third_party/wepoll/wepoll.c)
+        target_include_directories(bbnet PRIVATE third_party/wepoll)
+    endif()
+    if (APPLE)
+        pkg_check_modules(MINIUPNPC REQUIRED IMPORTED_TARGET miniupnpc)
+        target_link_libraries(bbnet PRIVATE PkgConfig::MINIUPNPC)
+    else()
+        find_path(MINIUPNPC_INCLUDE miniupnpc.h PATH_SUFFIXES miniupnpc REQUIRED)
+        find_library(MINIUPNPC_LIBRARY NAMES libminiupnpc.a miniupnpc REQUIRED)
+        target_include_directories(bbnet PRIVATE "${MINIUPNPC_INCLUDE}")
+        if (WIN32)
+            target_compile_definitions(bbnet PRIVATE MINIUPNP_STATICLIB)
+        endif()
+        target_link_libraries(bbnet PRIVATE "${MINIUPNPC_LIBRARY}")
+    endif()
+    target_compile_definitions(bbnet PRIVATE BOOST_ASIO_STANDALONE NDEBUG)
+    target_compile_options(bbnet PRIVATE -Wno-deprecated-declarations -Wno-missing-field-initializers)
+    target_link_libraries(bbnet PUBLIC Vulkan::Headers fmt::fmt Boost::headers magic_enum::magic_enum
+        protobuf::libprotobuf)
+    if (WIN32)
+        target_compile_definitions(bbnet PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
+        target_compile_options(bbnet PRIVATE
+            $<$<COMPILE_LANGUAGE:CXX>:-include ${CMAKE_CURRENT_SOURCE_DIR}/shim/bb_win_compat.h>)
+        target_link_libraries(bbnet PUBLIC ws2_32 iphlpapi bcrypt crypt32)
+    endif()
+    target_link_libraries(bbgpu PUBLIC bbnet)
+    target_compile_definitions(bbgpu PRIVATE BB_ENABLE_NETWORK)
 endif()
-set(SHADNET_PROTO_OUT "${CMAKE_CURRENT_BINARY_DIR}/shadnet_proto_gen")
-file(MAKE_DIRECTORY "${SHADNET_PROTO_OUT}")
-add_custom_command(
-    OUTPUT "${SHADNET_PROTO_OUT}/shadnet.pb.cc" "${SHADNET_PROTO_OUT}/shadnet.pb.h"
-    COMMAND protobuf::protoc "--proto_path=${CMAKE_CURRENT_SOURCE_DIR}/shadps4/shadnet"
-            "--cpp_out=${SHADNET_PROTO_OUT}" "${CMAKE_CURRENT_SOURCE_DIR}/shadps4/shadnet/shadnet.proto"
-    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shadps4/shadnet/shadnet.proto")
-file(GLOB_RECURSE BBNET_SOURCES CONFIGURE_DEPENDS shadps4/core/libraries/network/*.cpp
-    shadps4/core/libraries/np/*.cpp shadps4/shadnet/*.cpp)
-# Trophies and the system dialogs stay in the C runtime; their shadPS4 versions need the
-# emulator's UI layers.
-list(FILTER BBNET_SOURCES EXCLUDE REGEX
-    "np_trophy|trophy_ui|np_sns_facebook_dialog|np_profile_dialog/|np_commerce/")
-find_package(nlohmann_json CONFIG REQUIRED)
-add_library(bbnet STATIC ${BBNET_SOURCES} "${SHADNET_PROTO_OUT}/shadnet.pb.cc" bbnet/bbnet_glue.cpp)
-target_include_directories(bbnet PRIVATE shim shadps4 shadps4/shadnet "${SHADNET_PROTO_OUT}"
-    third_party/imgui third_party/httplib)
-target_link_libraries(bbnet PRIVATE nlohmann_json::nlohmann_json)
-# HTTPS (the community game server only speaks TLS) and gzip replies in cpp-httplib.
-find_package(OpenSSL REQUIRED)
-find_package(ZLIB REQUIRED)
-target_compile_definitions(bbnet PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT CPPHTTPLIB_ZLIB_SUPPORT)
-target_link_libraries(bbnet PRIVATE OpenSSL::SSL OpenSSL::Crypto ZLIB::ZLIB)
-if (WIN32)
-    target_sources(bbnet PRIVATE third_party/wepoll/wepoll.c)
-    target_include_directories(bbnet PRIVATE third_party/wepoll)
-endif()
-    find_path(MINIUPNPC_INCLUDE miniupnpc.h PATH_SUFFIXES miniupnpc REQUIRED)
-    find_library(MINIUPNPC_LIBRARY NAMES libminiupnpc.a miniupnpc REQUIRED)
-    target_include_directories(bbnet PRIVATE "${MINIUPNPC_INCLUDE}")
-if (WIN32)
-    target_compile_definitions(bbnet PRIVATE MINIUPNP_STATICLIB)
-endif()
-    target_link_libraries(bbnet PRIVATE "${MINIUPNPC_LIBRARY}")
-target_compile_definitions(bbnet PRIVATE BOOST_ASIO_STANDALONE NDEBUG)
-target_compile_options(bbnet PRIVATE -Wno-deprecated-declarations -Wno-missing-field-initializers)
-target_link_libraries(bbnet PUBLIC Vulkan::Headers fmt::fmt Boost::headers magic_enum::magic_enum
-    protobuf::libprotobuf)
-if (WIN32)
-    target_compile_definitions(bbnet PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
-    target_compile_options(bbnet PRIVATE
-        $<$<COMPILE_LANGUAGE:CXX>:-include ${CMAKE_CURRENT_SOURCE_DIR}/shim/bb_win_compat.h>)
-    target_link_libraries(bbnet PUBLIC ws2_32 iphlpapi bcrypt crypt32)
-endif()
-target_link_libraries(bbgpu PUBLIC bbnet)
 # In-game settings menu: Dear ImGui (third_party/imgui, MIT) with its Vulkan backend, and an
 # embedded Cyrillic font (third_party/fonts).
 target_sources(bbgpu PRIVATE third_party/imgui/imgui.cpp third_party/imgui/imgui_draw.cpp
@@ -258,14 +269,23 @@ set_source_files_properties(shim/bbport_overlay.cpp PROPERTIES
 target_include_directories(bbgpu PRIVATE shim shadps4 ${SHADER_INCLUDE} third_party/gcn/include third_party/half/include)
 target_compile_definitions(bbgpu PRIVATE BOOST_ASIO_STANDALONE NDEBUG)
 target_compile_options(bbgpu PRIVATE -Wno-deprecated-declarations -Wno-missing-field-initializers)
-# Runtime symbols (runtime_memory_*, runtime_process_*) resolve against bb-probe.
-if (NOT WIN32)
+# Runtime symbols (runtime_memory_*, runtime_process_*) resolve against the native loader.
+if (APPLE)
+    target_link_options(bbgpu PRIVATE "-Wl,-undefined,dynamic_lookup")
+elseif (NOT WIN32)
     target_link_options(bbgpu PRIVATE -Wl,--allow-shlib-undefined)
 endif()
 target_link_libraries(bbgpu PRIVATE ffx-vulkan::portable ffx-vulkan::fsr4-v07-vulkan
     ffx-vulkan::fsr3-vk-framegeneration-3.1.6)
 target_link_libraries(bbgpu PUBLIC Vulkan::Headers fmt::fmt Boost::headers magic_enum::magic_enum
     tsl::robin_map GPUOpen::VulkanMemoryAllocator PkgConfig::XXHASH PkgConfig::SDL3 PkgConfig::FFMPEG miniz::miniz Zydis::Zydis sirit)
+if (APPLE)
+    # Some Homebrew Zydis packages export Zycore as a bare -lZycore dependency.
+    # Supply the discovered library directory so Apple ld can resolve it reliably.
+    find_library(ZYCORE_LIBRARY NAMES Zycore REQUIRED)
+    get_filename_component(ZYCORE_LIBRARY_DIR ${ZYCORE_LIBRARY} DIRECTORY)
+    target_link_directories(bbgpu PRIVATE ${ZYCORE_LIBRARY_DIR})
+endif()
 if (WIN32)
     # Guest code is entered with the System V ABI; NOMINMAX/WIN32_LEAN_AND_MEAN keep
     # <windows.h> out of the way of std::min/max and the Vulkan/SDL headers.
@@ -276,7 +296,11 @@ if (WIN32)
 else()
     # the xbyak submodule, as on Windows (no system package needed).
     target_include_directories(bbgpu PRIVATE third_party/xbyak)
-    target_link_libraries(bbgpu PUBLIC PkgConfig::X11)
+    if (APPLE)
+        target_link_libraries(bbgpu PUBLIC Vulkan::Vulkan)
+    else()
+        target_link_libraries(bbgpu PUBLIC PkgConfig::X11)
+    endif()
 endif()
 
 # bbport (Windows): bbgpu is a static library there, so the loader and the HLE runtime are

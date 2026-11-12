@@ -194,11 +194,9 @@ public:
         return gpu_id;
     }
 
-#if defined(__linux__) || defined(_WIN32)
     u32 GetGpuCommandProcessorThreadId() {
         return gpu_tid;
     }
-#endif
 
 private:
     struct Task {
@@ -297,9 +295,7 @@ private:
     std::queue<Common::UniqueFunction<void>> command_queue{};
     static inline thread_local bool on_processor_thread = false;
     std::thread::id gpu_id;
-#if defined(__linux__) || defined(_WIN32)
     u32 gpu_tid{};
-#endif
     s32 curr_qid{-1};
 };
 

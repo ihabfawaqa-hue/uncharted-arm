@@ -3,17 +3,27 @@
 
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #ifdef _WIN32
 #include <windows.h>
 #undef near
-#else
+#elif !defined(__APPLE__)
+#ifndef __APPLE__
 #include <ucontext.h>
 #include <unistd.h>
 #endif
-#include <x86intrin.h>
+#endif
+#include "bbport_threads.h"
+
+namespace {
+std::uint64_t LogClockNs() {
+    return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+} // namespace
 
 namespace BbWriteLog {
 namespace {
@@ -61,8 +71,8 @@ void Note(std::uint64_t address, const void* data, std::uint64_t size, Source so
 }
 
 void Record(std::uint64_t address, const void* data, std::uint64_t size, Source source) {
-    static thread_local const std::uint32_t tid = static_cast<std::uint32_t>(gettid());
-    Entry e{address, size, 0, __rdtsc(), source, tid};
+    static thread_local const std::uint32_t tid = static_cast<std::uint32_t>(BbThreads::ThreadId());
+    Entry e{address, size, 0, LogClockNs(), source, tid};
     std::memcpy(&e.first, data, size < 8 ? size : 8);
     Push(ring, head, e);
     // Only small writes are scanned: scanning downloads of megabytes delays them enough to hide
@@ -89,6 +99,10 @@ extern "C" void bbgpu_dump_guest_writes(void* ucontext) {
     if (Mode() == 0) {
         return;
     }
+#if defined(__APPLE__)
+    std::fprintf(stderr, "Write log: register dump is unavailable on macOS\n");
+    return;
+#else
 #ifdef _WIN32
     // The loader passes EXCEPTION_POINTERS (see signal_context.cpp).
     const CONTEXT* c = static_cast<const EXCEPTION_POINTERS*>(ucontext)->ContextRecord;
@@ -107,13 +121,13 @@ extern "C" void bbgpu_dump_guest_writes(void* ucontext) {
     }
     const char* sources[] = {"backing",      "WriteData",           "fence",
                              "EOP (decoded)", "WriteData (decoded)", "EOS (decoded)"};
-    const std::uint64_t now = __rdtsc();
+    const std::uint64_t now = LogClockNs();
     const auto print = [&](const Entry& e, const char* what) {
         std::fprintf(stderr,
                      "Write log: %s %s %#llx +%llu first %#llx tid %u, %.3f s before the fault\n",
                      what, e.source < 6 ? sources[e.source] : "?", (unsigned long long)e.address,
                      (unsigned long long)e.size, (unsigned long long)e.first, e.tid,
-                     double(now - e.tsc) / 3.0e9);
+                     double(now - e.tsc) / 1.0e9);
     };
     const std::uint64_t nh = hits_head.load();
     for (std::uint64_t i = nh > hits.size() ? nh - hits.size() : 0; i < nh; ++i) {
@@ -161,4 +175,5 @@ extern "C" void bbgpu_dump_guest_writes(void* ucontext) {
         }
     }
     std::fprintf(stderr, "Write log: %llu writes logged\n", (unsigned long long)n);
+#endif
 }
